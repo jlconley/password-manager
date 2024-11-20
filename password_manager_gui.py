@@ -1,3 +1,6 @@
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.backends import default_backend
 import hashlib
 import os
 import sqlite3
@@ -5,6 +8,28 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import csv
 import re
+
+def pad_key(key):
+    return hashlib.sha256(key.encode()).digest()
+
+def encrypt_aes_256(key, plaintext):
+    key_bytes = pad_key(key)
+    iv = os.urandom(16)
+    cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    padder = padding.PKCS7(128).padder()
+    padded_data = padder.update(plaintext.encode()) + padder.finalize()
+    ciphertext = encryptor.update(padded_data) + encryptor.finalize()
+    return ciphertext, iv
+
+def decrypt_aes_256(key, ciphertext, iv):
+    key_bytes = pad_key(key)
+    cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
+    decryptor = cipher.decryptor()
+    padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+    unpadder = padding.PKCS7(128).unpadder()
+    plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
+    return plaintext.decode()
 
 # Initialize Database
 def init_db():
@@ -29,9 +54,22 @@ def init_db():
             site TEXT NOT NULL,
             site_username TEXT NOT NULL,
             site_password TEXT NOT NULL,
+            site_iv TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
+
+    cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS check_duplicate_site
+        BEFORE INSERT ON credentials
+        FOR EACH ROW
+        BEGIN
+            SELECT CASE
+                WHEN (SELECT COUNT(*) FROM credentials WHERE site = New.site) > 0
+                THEN RAISE (ABORT, 'Already an account for that site')
+            END;
+        END;
+                   ''')
     conn.commit()
     conn.close()
 
@@ -82,32 +120,38 @@ def login_user(username, password):
     return None
 
 # Add a Credential
-def add_credential(user_id, site, site_username, site_password):
+def add_credential(key, user_id, site, site_username, site_password):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
     # Hash the site password
-    _, hashed_site_password = hash_password(site_password)
-
-    cursor.execute('''
-        INSERT INTO credentials (user_id, site, site_username, site_password)
-        VALUES (?, ?, ?, ?)
-    ''', (user_id, site, site_username, hashed_site_password))
-    conn.commit()
-    conn.close()
-    messagebox.showinfo("Success", "Credential saved successfully!")
+    encrypted_site_password, iv = encrypt_aes_256(key, site_password)
+    try:
+        cursor.execute('''
+            INSERT INTO credentials (user_id, site, site_username, site_password, site_iv)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, site, site_username, encrypted_site_password, iv))
+        conn.commit()
+        messagebox.showinfo("Success", "Credential saved successfully!")
+    except sqlite3.DatabaseError:
+        messagebox.showerror("Error", "Username already exists.")
+    finally:
+        cursor.close()
+        conn.close()
 
 # View Credentials
-def view_credentials(user_id):
+def view_credentials(key, user_id):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
-    cursor.execute('SELECT site, site_username, site_password FROM credentials WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT site, site_username, site_password, site_iv FROM credentials WHERE user_id = ?', (user_id,))
     credentials = cursor.fetchall()
     conn.close()
 
     if credentials:
-        result = "\n".join([f"Site: {site}, Username: {username}, Password: {password}" for site, username, password in credentials])
+        result = ""
+        for site, username, password, iv in credentials:
+            result = result + f"Site: {site}, Username: {username}, Password: {decrypt_aes_256(key, password, iv)}\n"
         messagebox.showinfo("Your Credentials", result)
     else:
         messagebox.showinfo("Your Credentials", "No credentials stored.")
@@ -127,19 +171,19 @@ def delete_credential(user_id, site):
         messagebox.showerror("Error", f"No credential found for site '{site}'.")
 
 # Add a method to update a credential
-def update_credential(user_id, site, new_username, new_password):
+def update_credential(key, user_id, site, new_username, new_password):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
     # Hash the new password
-    _, hashed_password = hash_password(new_password)
+    encrypted_site_password, iv = encrypt_aes_256(key, new_password)
 
     # Update the specified credential
     cursor.execute('''
         UPDATE credentials
-        SET site_username = ?, site_password = ?
+        SET site_username = ?, site_password = ?, site_iv = ?
         WHERE user_id = ? AND site = ?
-    ''', (new_username, hashed_password, user_id, site))
+    ''', (new_username, encrypted_site_password, iv, user_id, site))
     conn.commit()
     conn.close()
 
@@ -168,6 +212,7 @@ class PasswordManagerApp:
         self.root.title("Password Manager")
         self.root.geometry("400x300")
         self.show_main_menu()
+        self.key = None
 
     def clear_frame(self):
         for widget in self.root.winfo_children():
@@ -223,6 +268,7 @@ class PasswordManagerApp:
                 user_id = login_user(username, password)
                 if user_id:
                     self.user_id = user_id
+                    self.key = password
                     self.show_dashboard()
             else:
                 messagebox.showerror("Error", "All fields are required.")
@@ -235,7 +281,7 @@ class PasswordManagerApp:
 
         tk.Label(self.root, text="Dashboard", font=("Arial", 16)).pack(pady=10)
         tk.Button(self.root, text="Add Credential", width=20, command=self.show_add_credential).pack(pady=5)
-        tk.Button(self.root, text="View Credentials", width=20, command=lambda: view_credentials(self.user_id)).pack(pady=5)
+        tk.Button(self.root, text="View Credentials", width=20, command=lambda: view_credentials(self.key, self.user_id)).pack(pady=5)
         tk.Button(self.root, text="Delete Credential", width=20, command=self.show_delete_credential).pack(pady=5)
         tk.Button(self.root, text="Update Credential", width=20, command=self.show_update_credential).pack(pady=5)
         tk.Button(self.root, text="Logout", width=20, command=self.logout).pack(pady=5)
@@ -278,7 +324,7 @@ class PasswordManagerApp:
             new_username = username_entry.get()
             new_password = password_entry.get()
             if site and new_username and new_password:
-                update_credential(self.user_id, site, new_username, new_password)
+                update_credential(self.key, self.user_id, site, new_username, new_password)
                 self.show_dashboard()
             else:
                 messagebox.showerror("Error", "All fields are required.")
@@ -309,7 +355,7 @@ class PasswordManagerApp:
             if validation_error:
                 messagebox.showerror("Error", validation_error)
             elif site and site_username and site_password:
-                add_credential(self.user_id, site, site_username, site_password)
+                add_credential(self.key, self.user_id, site, site_username, site_password)
                 self.show_dashboard()
             else:
                 messagebox.showerror("Error", "All fields are required.")
@@ -319,6 +365,7 @@ class PasswordManagerApp:
 
     def logout(self):
         self.user_id = None
+        self.key = None
         self.show_main_menu()
 
 def export_users_and_credentials_to_csv():
@@ -341,7 +388,7 @@ def export_users_and_credentials_to_csv():
     rows = cursor.fetchall()
 
     # Define the CSV file path
-    current_directory = "/Users/jimmyc/Desktop/College/Fall - 2024/COMP 581/Password Manager/"
+    current_directory = "./password-manager/"
     file_name = "users_and_credentials.csv"
     csv_file_path = os.path.join(current_directory, file_name)
 
