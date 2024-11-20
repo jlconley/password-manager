@@ -156,19 +156,19 @@ def view_credentials(key, user_id):
     else:
         messagebox.showinfo("Your Credentials", "No credentials stored.")
 
-def delete_credential(user_id, site):
+def delete_credential(user_id, site, site_username):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
     # Delete the specified credential
-    cursor.execute('DELETE FROM credentials WHERE user_id = ? AND site = ?', (user_id, site))
+    cursor.execute('DELETE FROM credentials WHERE user_id = ? AND site = ? AND site_username = ?', (user_id, site, site_username))
     conn.commit()
     conn.close()
 
     if cursor.rowcount > 0:
-        messagebox.showinfo("Success", f"Credential for site '{site}' deleted successfully!")
+        messagebox.showinfo("Success", f"Credential for username {site_username} site '{site}' deleted successfully!")
     else:
-        messagebox.showerror("Error", f"No credential found for site '{site}'.")
+        messagebox.showerror("Error", f"No credential found for username {site_username} from site '{site}'.")
 
 # Add a method to update a credential
 def update_credential(key, user_id, site, new_username, new_password):
@@ -291,13 +291,17 @@ class PasswordManagerApp:
 
         tk.Label(self.root, text="Delete Credential", font=("Arial", 16)).pack(pady=10)
         tk.Label(self.root, text="Website:").pack()
-        site_entry = tk.Entry(self.root)
-        site_entry.pack()
+        website_entry = tk.Entry(self.root)
+        website_entry.pack()
+        tk.Label(self.root, text="Username:").pack()
+        username_entry = tk.Entry(self.root)
+        username_entry.pack()
 
         def submit():
-            site = site_entry.get()
+            site = website_entry.get()
+            username = username_entry.get()
             if site:
-                delete_credential(self.user_id, site)
+                delete_credential(self.user_id, site, username)
                 self.show_dashboard()
             else:
                 messagebox.showerror("Error", "Please enter a website.")
