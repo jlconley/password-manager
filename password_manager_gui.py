@@ -65,8 +65,8 @@ def init_db():
         FOR EACH ROW
         BEGIN
             SELECT CASE
-                WHEN (SELECT COUNT(*) FROM credentials WHERE site = New.site) > 0
-                THEN RAISE (ABORT, 'Already an account for that site')
+                WHEN (SELECT COUNT(*) FROM credentials WHERE site = New.site AND site_username = New.site_username) > 0
+                THEN RAISE (ABORT, 'Already an account with that username for that site')
             END;
         END;
                    ''')
@@ -403,8 +403,8 @@ def export_users_and_credentials_to_csv():
     return csv_file_path
 
 # Call the export function and get the path
-csv_path = export_users_and_credentials_to_csv()
-print(f"CSV file created at: {csv_path}")
+#csv_path = export_users_and_credentials_to_csv()
+#print(f"CSV file created at: {csv_path}")
 
 # Main Program
 if __name__ == "__main__":
