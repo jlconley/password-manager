@@ -1,6 +1,8 @@
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
 import hashlib
 import os
 import sqlite3
@@ -8,27 +10,34 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 import csv
 import re
+import base64
 
-def pad_key(key):
-    return hashlib.sha256(key.encode()).digest()
+# Key derivation using PBKDF2
+def derive_key(password, salt):
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100_000,
+        backend=default_backend()
+    )
+    return kdf.derive(password.encode())
 
 def encrypt_aes_256(key, plaintext):
-    key_bytes = pad_key(key)
-    iv = os.urandom(16)
-    cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
+    iv = os.urandom(16)  # Generate a random IV
+    cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
     encryptor = cipher.encryptor()
-    padder = padding.PKCS7(128).padder()
-    padded_data = padder.update(plaintext.encode()) + padder.finalize()
-    ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-    return ciphertext, iv
+    ciphertext = encryptor.update(plaintext.encode()) + encryptor.finalize()
+    print(f"Ciphertext (raw): {ciphertext}")
+    print(f"IV (raw): {iv}")
+    print(f"Tag (raw): {encryptor.tag}")
+    return ciphertext, iv, encryptor.tag
 
-def decrypt_aes_256(key, ciphertext, iv):
-    key_bytes = pad_key(key)
-    cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(iv), backend=default_backend())
+def decrypt_aes_256(key, ciphertext, iv, tag):
+    cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
     decryptor = cipher.decryptor()
-    padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-    unpadder = padding.PKCS7(128).unpadder()
-    plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
+    plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+    print(plaintext)
     return plaintext.decode()
 
 # Initialize Database
@@ -55,25 +64,27 @@ def init_db():
             site_username TEXT NOT NULL,
             site_password TEXT NOT NULL,
             site_iv TEXT NOT NULL,
+            site_tag TEXT NOT NULL,  -- Add this column
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
 
+    # Trigger for duplicate entries
     cursor.execute('''
         CREATE TRIGGER IF NOT EXISTS check_duplicate_site
         BEFORE INSERT ON credentials
         FOR EACH ROW
         BEGIN
             SELECT CASE
-                WHEN (SELECT COUNT(*) FROM credentials WHERE site = New.site AND site_username = New.site_username) > 0
+                WHEN (SELECT COUNT(*) FROM credentials WHERE site = NEW.site AND site_username = NEW.site_username) > 0
                 THEN RAISE (ABORT, 'Already an account with that username for that site')
             END;
         END;
-                   ''')
+    ''')
     conn.commit()
     conn.close()
 
-# Password Hashing with SHA-256
+# Password Hashing with Salt
 def hash_password(password):
     salt = os.urandom(16)  # Generate a 16-byte random salt
     password_hash = hashlib.sha256(salt + password.encode('utf-8')).hexdigest()
@@ -97,6 +108,7 @@ def register_user(username, password):
         cursor.execute('INSERT INTO users (username, password_hash, salt) VALUES (?, ?, ?)', (username, password_hash, salt))
         conn.commit()
         messagebox.showinfo("Success", "Registration successful!")
+        export_users_and_credentials_to_csv()
     except sqlite3.IntegrityError:
         messagebox.showerror("Error", "Username already exists.")
     finally:
@@ -115,28 +127,30 @@ def login_user(username, password):
     if user:
         user_id, stored_password_hash, stored_salt = user
         if verify_password(stored_salt, stored_password_hash, password):
-            return user_id  # Successful login
+            derived_key = derive_key(password, bytes.fromhex(stored_salt))  # Ensure derived_key is bytes
+            return user_id, derived_key  # Successful login
+    # Handle invalid credentials
     messagebox.showerror("Error", "Invalid username or password.")
-    return None
+    return None, None
 
 # Add a Credential
 def add_credential(key, user_id, site, site_username, site_password):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
-    # Hash the site password
-    encrypted_site_password, iv = encrypt_aes_256(key, site_password)
+    # Encrypt the site password
+    encrypted_site_password, iv, tag = encrypt_aes_256(key, site_password)
     try:
         cursor.execute('''
-            INSERT INTO credentials (user_id, site, site_username, site_password, site_iv)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, site, site_username, encrypted_site_password, iv))
+            INSERT INTO credentials (user_id, site, site_username, site_password, site_iv, site_tag)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, site, site_username, encrypted_site_password, iv, tag))
         conn.commit()
         messagebox.showinfo("Success", "Credential saved successfully!")
+        export_users_and_credentials_to_csv()
     except sqlite3.DatabaseError:
-        # Catches errors and ensures the transaction rolls back
         conn.rollback()
-        messagebox.showerror("Error", "Username already exists.")
+        messagebox.showerror("Error", "Failed to add the credential. Please try again.")
     finally:
         cursor.close()
         conn.close()
@@ -146,17 +160,25 @@ def view_credentials(key, user_id):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
-    cursor.execute('SELECT site, site_username, site_password, site_iv FROM credentials WHERE user_id = ?', (user_id,))
+    cursor.execute('SELECT site, site_username, site_password, site_iv, site_tag FROM credentials WHERE user_id = ?', (user_id,))
     credentials = cursor.fetchall()
     conn.close()
 
     if credentials:
         result = ""
-        for site, username, password, iv in credentials:
-            result = result + f"Site: {site}, Username: {username}, Password: {decrypt_aes_256(key, password, iv)}\n"
+        for site, username, password, iv, tag in credentials:
+            try:
+                decrypted_password = decrypt_aes_256(key, password, iv, tag)
+            except Exception:
+                decrypted_password = "[Decryption Failed]"
+            result += f"Site: {site}, Username: {username}, Password: {decrypted_password}\n"
         messagebox.showinfo("Your Credentials", result)
     else:
         messagebox.showinfo("Your Credentials", "No credentials stored.")
+
+# The rest of your code remains unchanged, including the `delete_credential`, `update_credential`, `Tkinter` setup, etc.
+# Ensure the `view_credentials` and other calls to manage credentials pass the derived `key` for encryption/decryption.
+
 
 def delete_credential(user_id, site, site_username):
     conn = sqlite3.connect('password_manager.db')
@@ -169,6 +191,7 @@ def delete_credential(user_id, site, site_username):
 
         if cursor.rowcount > 0:
             messagebox.showinfo("Success", f"Credential for username {site_username} site '{site}' deleted successfully!")
+            export_users_and_credentials_to_csv()
         else:
             messagebox.showerror("Error", f"No credential found for username {site_username} from site '{site}'.")
     
@@ -200,6 +223,7 @@ def update_credential(key, user_id, site, new_username, new_password):
 
         if cursor.rowcount > 0:
             messagebox.showinfo("Success", f"Credential for site '{site}' updated successfully!")
+            export_users_and_credentials_to_csv()
         else:
             messagebox.showerror("Error", f"No credential found for site '{site}'.")
     
@@ -230,12 +254,11 @@ class PasswordManagerApp:
     def __init__(self, root):
         self.root = root
         self.user_id = None
+        self.key = None
         self.root.title("Password Manager")
         self.root.geometry("400x300")
-        self.show_main_menu()
-        self.key = None
         self.root.configure(bg='lightblue')
-
+        self.show_main_menu()
 
     def clear_frame(self):
         for widget in self.root.winfo_children():
@@ -260,20 +283,23 @@ class PasswordManagerApp:
         password_entry = tk.Entry(self.root, show="*")
         password_entry.pack()
 
-
         def submit():
-            username = username_entry.get()
-            password = password_entry.get()
-            if username and password:
-                register_user(username, password)
-                self.show_main_menu()
-            else:
+            username = username_entry.get().strip()
+            password = password_entry.get().strip()
+            if not username or not password:
                 messagebox.showerror("Error", "All fields are required.")
+                return
+
+            validation_error = validate_password(password)
+            if validation_error:
+                messagebox.showerror("Error", validation_error)
+                return
+
+            register_user(username, password)
+            self.show_main_menu()
 
         tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_main_menu, bd=0, padx=20, pady=10).pack()
-        
-        self.root.update_idletasks()
 
     def show_login(self):
         self.clear_frame()
@@ -287,21 +313,22 @@ class PasswordManagerApp:
         password_entry.pack()
 
         def submit():
-            username = username_entry.get()
-            password = password_entry.get()
-            if username and password:
-                user_id = login_user(username, password)
-                if user_id:
-                    self.user_id = user_id
-                    self.key = password
-                    self.show_dashboard()
-            else:
+            username = username_entry.get().strip()
+            password = password_entry.get().strip()
+            if not username or not password:
                 messagebox.showerror("Error", "All fields are required.")
+                return
+
+            user_id, derived_key = login_user(username, password)
+            if user_id:
+                self.user_id = user_id
+                self.key = derived_key  # Derived key in bytes
+                self.show_dashboard()
+            else:
+                messagebox.showerror("Error", "Invalid username or password.")
 
         tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_main_menu, bd=0, padx=20, pady=10).pack()
-
-        self.root.update_idletasks()
 
     def show_dashboard(self):
         self.clear_frame()
@@ -312,61 +339,6 @@ class PasswordManagerApp:
         tk.Button(self.root, text="Delete Credential", width=20, command=self.show_delete_credential, bd=0, padx=20, pady=10).pack(pady=5)
         tk.Button(self.root, text="Update Credential", width=20, command=self.show_update_credential, bd=0, padx=20, pady=10).pack(pady=5)
         tk.Button(self.root, text="Logout", width=20, command=self.logout, bd=0, padx=20, pady=10).pack(pady=5)
-
-    def show_delete_credential(self):
-        self.clear_frame()
-
-        tk.Label(self.root, text="Delete Credential", font=("Arial", 16), bg='lightblue').pack(pady=10)
-        tk.Label(self.root, text="Website:", bg='lightblue').pack()
-        website_entry = tk.Entry(self.root)
-        website_entry.pack()
-        tk.Label(self.root, text="Username:").pack()
-        username_entry = tk.Entry(self.root)
-        username_entry.pack()
-
-        def submit():
-            site = website_entry.get()
-            username = username_entry.get()
-            if site:
-                delete_credential(self.user_id, site, username)
-                self.show_dashboard()
-            else:
-                messagebox.showerror("Error", "Please enter a website.")
-
-        tk.Button(self.root, text="Delete", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
-        tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
-
-        self.root.update_idletasks()
-
-    def show_update_credential(self):
-        self.clear_frame()
-
-        tk.Label(self.root, text="Update Credential", font=("Arial", 16), bg='lightblue').pack(pady=10)
-        tk.Label(self.root, text="Website:", bg='lightblue').pack()
-        site_entry = tk.Entry(self.root)
-        site_entry.pack()
-        tk.Label(self.root, text="New Username:", bg='lightblue').pack()
-        username_entry = tk.Entry(self.root)
-        username_entry.pack()
-        tk.Label(self.root, text="New Password:", bg='lightblue').pack()
-        password_entry = tk.Entry(self.root, show="*")
-        password_entry.pack()
-
-        def submit():
-            site = site_entry.get()
-            new_username = username_entry.get()
-            new_password = password_entry.get()
-            if site and new_username and new_password:
-                update_credential(self.key, self.user_id, site, new_username, new_password)
-                self.show_dashboard()
-            else:
-                messagebox.showerror("Error", "All fields are required.")
-
-        tk.Button(self.root, text="Update", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
-        tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
-
-        self.root.update_idletasks()
-
 
     def show_add_credential(self):
         self.clear_frame()
@@ -383,22 +355,78 @@ class PasswordManagerApp:
         site_password_entry.pack()
 
         def submit():
-            site = site_entry.get()
-            site_username = site_username_entry.get()
-            site_password = site_password_entry.get()
+            site = site_entry.get().strip()
+            site_username = site_username_entry.get().strip()
+            site_password = site_password_entry.get().strip()
+            if not site or not site_username or not site_password:
+                messagebox.showerror("Error", "All fields are required.")
+                return
+
             validation_error = validate_password(site_password)
             if validation_error:
                 messagebox.showerror("Error", validation_error)
-            elif site and site_username and site_password:
+                return
+
+            try:
                 add_credential(self.key, self.user_id, site, site_username, site_password)
                 self.show_dashboard()
-            else:
-                messagebox.showerror("Error", "All fields are required.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to add credential: {e}")
 
         tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
 
-        self.root.update_idletasks()
+    def show_delete_credential(self):
+        self.clear_frame()
+
+        tk.Label(self.root, text="Delete Credential", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        tk.Label(self.root, text="Website:", bg='lightblue').pack()
+        website_entry = tk.Entry(self.root)
+        website_entry.pack()
+        tk.Label(self.root, text="Username:", bg='lightblue').pack()
+        username_entry = tk.Entry(self.root)
+        username_entry.pack()
+
+        def submit():
+            site = website_entry.get().strip()
+            username = username_entry.get().strip()
+            if not site:
+                messagebox.showerror("Error", "Website field is required.")
+                return
+
+            delete_credential(self.user_id, site, username)
+            self.show_dashboard()
+
+        tk.Button(self.root, text="Delete", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
+        tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
+
+    def show_update_credential(self):
+        self.clear_frame()
+
+        tk.Label(self.root, text="Update Credential", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        tk.Label(self.root, text="Website:", bg='lightblue').pack()
+        site_entry = tk.Entry(self.root)
+        site_entry.pack()
+        tk.Label(self.root, text="New Username:", bg='lightblue').pack()
+        username_entry = tk.Entry(self.root)
+        username_entry.pack()
+        tk.Label(self.root, text="New Password:", bg='lightblue').pack()
+        password_entry = tk.Entry(self.root, show="*")
+        password_entry.pack()
+
+        def submit():
+            site = site_entry.get().strip()
+            new_username = username_entry.get().strip()
+            new_password = password_entry.get().strip()
+            if not site or not new_username or not new_password:
+                messagebox.showerror("Error", "All fields are required.")
+                return
+
+            update_credential(self.key, self.user_id, site, new_username, new_password)
+            self.show_dashboard()
+
+        tk.Button(self.root, text="Update", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
+        tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
 
     def logout(self):
         self.user_id = None
@@ -433,8 +461,12 @@ def export_users_and_credentials_to_csv():
     # Write to CSV
     with open(csv_file_path, mode='w', newline='', encoding='utf-8') as csv_file:
         writer = csv.writer(csv_file)
-        writer.writerow(["User", "Website", "Site Username", "Hashed Password"])  # Write the header
-        writer.writerows(rows)  # Write the data rows
+        writer.writerow(["User", "Website", "Site Username", "Encrypted Password"])
+        for row in rows:
+            user, site, site_username, encrypted_password = row
+            base64_password = base64.b64encode(encrypted_password).decode('utf-8')
+            print(f"Base64-encoded ciphertext: {base64_password}")
+            writer.writerow([user, site, site_username, base64_password])
 
     conn.close()
     return csv_file_path
