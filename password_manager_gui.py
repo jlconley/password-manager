@@ -213,7 +213,7 @@ class PasswordManagerApp:
         self.root.geometry("400x300")
         self.show_main_menu()
         self.key = None
-        self.root.configure(bg='lightblue')  # Example: light blue background for the window
+        self.root.configure(bg='lightblue')
 
 
     def clear_frame(self):
@@ -251,6 +251,8 @@ class PasswordManagerApp:
 
         tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_main_menu, bd=0, padx=20, pady=10).pack()
+        
+        self.root.update_idletasks()
 
     def show_login(self):
         self.clear_frame()
@@ -277,6 +279,8 @@ class PasswordManagerApp:
 
         tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_main_menu, bd=0, padx=20, pady=10).pack()
+
+        self.root.update_idletasks()
 
     def show_dashboard(self):
         self.clear_frame()
@@ -311,6 +315,8 @@ class PasswordManagerApp:
         tk.Button(self.root, text="Delete", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
 
+        self.root.update_idletasks()
+
     def show_update_credential(self):
         self.clear_frame()
 
@@ -337,6 +343,8 @@ class PasswordManagerApp:
 
         tk.Button(self.root, text="Update", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
+
+        self.root.update_idletasks()
 
 
     def show_add_credential(self):
@@ -368,6 +376,8 @@ class PasswordManagerApp:
 
         tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
         tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
+
+        self.root.update_idletasks()
 
     def logout(self):
         self.user_id = None
