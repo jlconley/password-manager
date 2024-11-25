@@ -213,6 +213,8 @@ class PasswordManagerApp:
         self.root.geometry("400x300")
         self.show_main_menu()
         self.key = None
+        self.root.configure(bg='lightblue')  # Example: light blue background for the window
+
 
     def clear_frame(self):
         for widget in self.root.winfo_children():
@@ -221,19 +223,19 @@ class PasswordManagerApp:
     def show_main_menu(self):
         self.clear_frame()
 
-        tk.Label(self.root, text="Password Manager", font=("Arial", 20)).pack(pady=10)
-        tk.Button(self.root, text="Register", width=20, command=self.show_register).pack(pady=5)
-        tk.Button(self.root, text="Login", width=20, command=self.show_login).pack(pady=5)
-        tk.Button(self.root, text="Quit", width=20, command=self.root.quit).pack(pady=5)
+        tk.Label(self.root, text="Password Manager", font=("Arial", 20), bg='lightblue').pack(pady=10)
+        tk.Button(self.root, text="Register", width=20, command=self.show_register, bd=0, padx=20, pady=10).pack(pady=5)
+        tk.Button(self.root, text="Login", width=20, command=self.show_login, bd=0, padx=20, pady=10).pack(pady=5)
+        tk.Button(self.root, text="Quit", width=20, command=self.root.quit, bd=0, padx=20, pady=10).pack(pady=5)
 
     def show_register(self):
         self.clear_frame()
 
-        tk.Label(self.root, text="Register", font=("Arial", 16)).pack(pady=10)
-        tk.Label(self.root, text="Username:").pack()
+        tk.Label(self.root, text="Register", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        tk.Label(self.root, text="Username:", bg='lightblue').pack()
         username_entry = tk.Entry(self.root)
         username_entry.pack()
-        tk.Label(self.root, text="Password:").pack()
+        tk.Label(self.root, text="Password:", bg='lightblue').pack()
         password_entry = tk.Entry(self.root, show="*")
         password_entry.pack()
 
@@ -247,17 +249,17 @@ class PasswordManagerApp:
             else:
                 messagebox.showerror("Error", "All fields are required.")
 
-        tk.Button(self.root, text="Submit", command=submit).pack(pady=10)
-        tk.Button(self.root, text="Back", command=self.show_main_menu).pack()
+        tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
+        tk.Button(self.root, text="Back", command=self.show_main_menu, bd=0, padx=20, pady=10).pack()
 
     def show_login(self):
         self.clear_frame()
 
-        tk.Label(self.root, text="Login", font=("Arial", 16)).pack(pady=10)
-        tk.Label(self.root, text="Username:").pack()
+        tk.Label(self.root, text="Login", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        tk.Label(self.root, text="Username:", bg='lightblue').pack()
         username_entry = tk.Entry(self.root)
         username_entry.pack()
-        tk.Label(self.root, text="Password:").pack()
+        tk.Label(self.root, text="Password:", bg='lightblue').pack()
         password_entry = tk.Entry(self.root, show="*")
         password_entry.pack()
 
@@ -273,24 +275,24 @@ class PasswordManagerApp:
             else:
                 messagebox.showerror("Error", "All fields are required.")
 
-        tk.Button(self.root, text="Submit", command=submit).pack(pady=10)
-        tk.Button(self.root, text="Back", command=self.show_main_menu).pack()
+        tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
+        tk.Button(self.root, text="Back", command=self.show_main_menu, bd=0, padx=20, pady=10).pack()
 
     def show_dashboard(self):
         self.clear_frame()
 
-        tk.Label(self.root, text="Dashboard", font=("Arial", 16)).pack(pady=10)
-        tk.Button(self.root, text="Add Credential", width=20, command=self.show_add_credential).pack(pady=5)
-        tk.Button(self.root, text="View Credentials", width=20, command=lambda: view_credentials(self.key, self.user_id)).pack(pady=5)
-        tk.Button(self.root, text="Delete Credential", width=20, command=self.show_delete_credential).pack(pady=5)
-        tk.Button(self.root, text="Update Credential", width=20, command=self.show_update_credential).pack(pady=5)
-        tk.Button(self.root, text="Logout", width=20, command=self.logout).pack(pady=5)
+        tk.Label(self.root, text="Dashboard", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        tk.Button(self.root, text="Add Credential", width=20, command=self.show_add_credential, bd=0, padx=20, pady=10).pack(pady=5)
+        tk.Button(self.root, text="View Credentials", width=20, command=lambda: view_credentials(self.key, self.user_id), bd=0, padx=20, pady=10).pack(pady=5)
+        tk.Button(self.root, text="Delete Credential", width=20, command=self.show_delete_credential, bd=0, padx=20, pady=10).pack(pady=5)
+        tk.Button(self.root, text="Update Credential", width=20, command=self.show_update_credential, bd=0, padx=20, pady=10).pack(pady=5)
+        tk.Button(self.root, text="Logout", width=20, command=self.logout, bd=0, padx=20, pady=10).pack(pady=5)
 
     def show_delete_credential(self):
         self.clear_frame()
 
-        tk.Label(self.root, text="Delete Credential", font=("Arial", 16)).pack(pady=10)
-        tk.Label(self.root, text="Website:").pack()
+        tk.Label(self.root, text="Delete Credential", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        tk.Label(self.root, text="Website:", bg='lightblue').pack()
         website_entry = tk.Entry(self.root)
         website_entry.pack()
         tk.Label(self.root, text="Username:").pack()
@@ -306,20 +308,20 @@ class PasswordManagerApp:
             else:
                 messagebox.showerror("Error", "Please enter a website.")
 
-        tk.Button(self.root, text="Delete", command=submit).pack(pady=10)
-        tk.Button(self.root, text="Back", command=self.show_dashboard).pack()
+        tk.Button(self.root, text="Delete", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
+        tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
 
     def show_update_credential(self):
         self.clear_frame()
 
-        tk.Label(self.root, text="Update Credential", font=("Arial", 16)).pack(pady=10)
-        tk.Label(self.root, text="Website:").pack()
+        tk.Label(self.root, text="Update Credential", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        tk.Label(self.root, text="Website:", bg='lightblue').pack()
         site_entry = tk.Entry(self.root)
         site_entry.pack()
-        tk.Label(self.root, text="New Username:").pack()
+        tk.Label(self.root, text="New Username:", bg='lightblue').pack()
         username_entry = tk.Entry(self.root)
         username_entry.pack()
-        tk.Label(self.root, text="New Password:").pack()
+        tk.Label(self.root, text="New Password:", bg='lightblue').pack()
         password_entry = tk.Entry(self.root, show="*")
         password_entry.pack()
 
@@ -333,21 +335,21 @@ class PasswordManagerApp:
             else:
                 messagebox.showerror("Error", "All fields are required.")
 
-        tk.Button(self.root, text="Update", command=submit).pack(pady=10)
-        tk.Button(self.root, text="Back", command=self.show_dashboard).pack()
+        tk.Button(self.root, text="Update", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
+        tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
 
 
     def show_add_credential(self):
         self.clear_frame()
 
-        tk.Label(self.root, text="Add Credential", font=("Arial", 16)).pack(pady=10)
-        tk.Label(self.root, text="Website:").pack()
+        tk.Label(self.root, text="Add Credential", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        tk.Label(self.root, text="Website:", bg='lightblue').pack()
         site_entry = tk.Entry(self.root)
         site_entry.pack()
-        tk.Label(self.root, text="Username:").pack()
+        tk.Label(self.root, text="Username:", bg='lightblue').pack()
         site_username_entry = tk.Entry(self.root)
         site_username_entry.pack()
-        tk.Label(self.root, text="Password:").pack()
+        tk.Label(self.root, text="Password:", bg='lightblue').pack()
         site_password_entry = tk.Entry(self.root, show="*")
         site_password_entry.pack()
 
@@ -364,8 +366,8 @@ class PasswordManagerApp:
             else:
                 messagebox.showerror("Error", "All fields are required.")
 
-        tk.Button(self.root, text="Submit", command=submit).pack(pady=10)
-        tk.Button(self.root, text="Back", command=self.show_dashboard).pack()
+        tk.Button(self.root, text="Submit", command=submit, bd=0, padx=20, pady=10).pack(pady=10)
+        tk.Button(self.root, text="Back", command=self.show_dashboard, bd=0, padx=20, pady=10).pack()
 
     def logout(self):
         self.user_id = None
