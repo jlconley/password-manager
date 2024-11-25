@@ -134,6 +134,8 @@ def add_credential(key, user_id, site, site_username, site_password):
         conn.commit()
         messagebox.showinfo("Success", "Credential saved successfully!")
     except sqlite3.DatabaseError:
+        # Catches errors and ensures the transaction rolls back
+        conn.rollback()
         messagebox.showerror("Error", "Username already exists.")
     finally:
         cursor.close()
@@ -160,15 +162,24 @@ def delete_credential(user_id, site, site_username):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
-    # Delete the specified credential
-    cursor.execute('DELETE FROM credentials WHERE user_id = ? AND site = ? AND site_username = ?', (user_id, site, site_username))
-    conn.commit()
-    conn.close()
+    try:
+        # Delete the specified credential
+        cursor.execute('DELETE FROM credentials WHERE user_id = ? AND site = ? AND site_username = ?', (user_id, site, site_username))
+        conn.commit()
 
-    if cursor.rowcount > 0:
-        messagebox.showinfo("Success", f"Credential for username {site_username} site '{site}' deleted successfully!")
-    else:
-        messagebox.showerror("Error", f"No credential found for username {site_username} from site '{site}'.")
+        if cursor.rowcount > 0:
+            messagebox.showinfo("Success", f"Credential for username {site_username} site '{site}' deleted successfully!")
+        else:
+            messagebox.showerror("Error", f"No credential found for username {site_username} from site '{site}'.")
+    
+    except sqlite3.DatabaseError:
+        # Catches errors and ensures the transaction rolls back
+        conn.rollback()
+        messagebox.showerror("Error", f"An error occured while deleting the credential.")
+
+    finally:
+        cursor.close()
+        conn.close()
 
 # Add a method to update a credential
 def update_credential(key, user_id, site, new_username, new_password):
@@ -178,19 +189,29 @@ def update_credential(key, user_id, site, new_username, new_password):
     # Hash the new password
     encrypted_site_password, iv = encrypt_aes_256(key, new_password)
 
-    # Update the specified credential
-    cursor.execute('''
-        UPDATE credentials
-        SET site_username = ?, site_password = ?, site_iv = ?
-        WHERE user_id = ? AND site = ?
-    ''', (new_username, encrypted_site_password, iv, user_id, site))
-    conn.commit()
-    conn.close()
+    try:
+        # Update the specified credential
+        cursor.execute('''
+            UPDATE credentials
+            SET site_username = ?, site_password = ?, site_iv = ?
+            WHERE user_id = ? AND site = ?
+        ''', (new_username, encrypted_site_password, iv, user_id, site))
+        conn.commit()
 
-    if cursor.rowcount > 0:
-        messagebox.showinfo("Success", f"Credential for site '{site}' updated successfully!")
-    else:
-        messagebox.showerror("Error", f"No credential found for site '{site}'.")
+        if cursor.rowcount > 0:
+            messagebox.showinfo("Success", f"Credential for site '{site}' updated successfully!")
+        else:
+            messagebox.showerror("Error", f"No credential found for site '{site}'.")
+    
+    except sqlite3.DatabaseError:
+        # Catches errors and ensures the transaction rolls back
+        conn.rollback()
+        messagebox.showerror("Error", f"An error occured while updating the credential.")
+    
+    finally:
+        cursor.close()
+        conn.close()
+
 
 def validate_password(password):
     if len(password) < 8:
