@@ -28,17 +28,34 @@ def encrypt_aes_256(key, plaintext):
     cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
     encryptor = cipher.encryptor()
     ciphertext = encryptor.update(plaintext.encode()) + encryptor.finalize()
+
+    # Return ciphertext, IV, and tag separately
+    encoded_ciphertext = base64.b64encode(ciphertext).decode('utf-8')
+    encoded_iv = base64.b64encode(iv).decode('utf-8')
+    encoded_tag = base64.b64encode(encryptor.tag).decode('utf-8')
+
     print(f"Ciphertext (raw): {ciphertext}")
     print(f"IV (raw): {iv}")
     print(f"Tag (raw): {encryptor.tag}")
-    return ciphertext, iv, encryptor.tag
+    print(f"Base64-encoded ciphertext: {encoded_ciphertext}")
+    print(f"Base64-encoded IV: {encoded_iv}")
+    print(f"Base64-encoded Tag: {encoded_tag}")
 
-def decrypt_aes_256(key, ciphertext, iv, tag):
+    return encoded_ciphertext, encoded_iv, encoded_tag
+
+def decrypt_aes_256(key, encoded_ciphertext, encoded_iv, encoded_tag):
+    # Decode Base64 back to binary
+    ciphertext = base64.b64decode(encoded_ciphertext)
+    iv = base64.b64decode(encoded_iv)
+    tag = base64.b64decode(encoded_tag)
+
+    # Decrypt
     cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
     decryptor = cipher.decryptor()
     plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-    print(plaintext)
+
     return plaintext.decode()
+
 
 # Initialize Database
 def init_db():
@@ -138,22 +155,27 @@ def add_credential(key, user_id, site, site_username, site_password):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
-    # Encrypt the site password
-    encrypted_site_password, iv, tag = encrypt_aes_256(key, site_password)
     try:
+        # Encrypt the site password
+        encoded_password, encoded_iv, encoded_tag = encrypt_aes_256(key, site_password)
+
+        # Insert into the table with the tag
         cursor.execute('''
             INSERT INTO credentials (user_id, site, site_username, site_password, site_iv, site_tag)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (user_id, site, site_username, encrypted_site_password, iv, tag))
+        ''', (user_id, site, site_username, encoded_password, encoded_iv, encoded_tag))
         conn.commit()
+
         messagebox.showinfo("Success", "Credential saved successfully!")
         export_users_and_credentials_to_csv()
-    except sqlite3.DatabaseError:
+    except sqlite3.DatabaseError as e:
         conn.rollback()
-        messagebox.showerror("Error", "Failed to add the credential. Please try again.")
+        messagebox.showerror("Error", f"Failed to add credential: {e}")
     finally:
         cursor.close()
         conn.close()
+
+
 
 # View Credentials
 def view_credentials(key, user_id):
@@ -166,18 +188,19 @@ def view_credentials(key, user_id):
 
     if credentials:
         result = ""
-        for site, username, password, iv, tag in credentials:
+        for site, username, encoded_password, encoded_iv, encoded_tag in credentials:
             try:
-                decrypted_password = decrypt_aes_256(key, password, iv, tag)
-            except Exception:
-                decrypted_password = "[Decryption Failed]"
-            result += f"Site: {site}, Username: {username}, Password: {decrypted_password}\n"
+                # Decode and decrypt the password
+                plaintext_password = decrypt_aes_256(key, encoded_password, encoded_iv, encoded_tag)
+            except Exception as e:
+                plaintext_password = "[Decryption Failed]"
+                print(f"Decryption error: {e}")  # Debug the error
+
+            result += f"Site: {site}, Username: {username}, Password: {plaintext_password}\n"
+
         messagebox.showinfo("Your Credentials", result)
     else:
         messagebox.showinfo("Your Credentials", "No credentials stored.")
-
-# The rest of your code remains unchanged, including the `delete_credential`, `update_credential`, `Tkinter` setup, etc.
-# Ensure the `view_credentials` and other calls to manage credentials pass the derived `key` for encryption/decryption.
 
 
 def delete_credential(user_id, site, site_username):
@@ -209,16 +232,16 @@ def update_credential(key, user_id, site, new_username, new_password):
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
 
-    # Hash the new password
-    encrypted_site_password, iv = encrypt_aes_256(key, new_password)
-
     try:
-        # Update the specified credential
+        # Encrypt the new password
+        encoded_password, encoded_iv, encoded_tag = encrypt_aes_256(key, new_password)
+
+        # Update the credential in the database
         cursor.execute('''
             UPDATE credentials
-            SET site_username = ?, site_password = ?, site_iv = ?
+            SET site_username = ?, site_password = ?, site_iv = ?, site_tag = ?
             WHERE user_id = ? AND site = ?
-        ''', (new_username, encrypted_site_password, iv, user_id, site))
+        ''', (new_username, encoded_password, encoded_iv, encoded_tag, user_id, site))
         conn.commit()
 
         if cursor.rowcount > 0:
@@ -226,12 +249,9 @@ def update_credential(key, user_id, site, new_username, new_password):
             export_users_and_credentials_to_csv()
         else:
             messagebox.showerror("Error", f"No credential found for site '{site}'.")
-    
-    except sqlite3.DatabaseError:
-        # Catches errors and ensures the transaction rolls back
+    except sqlite3.DatabaseError as e:
         conn.rollback()
-        messagebox.showerror("Error", f"An error occured while updating the credential.")
-    
+        messagebox.showerror("Error", f"An error occurred: {e}")
     finally:
         cursor.close()
         conn.close()
@@ -459,17 +479,45 @@ def export_users_and_credentials_to_csv():
 
     os.makedirs(current_directory, exist_ok=True)
     # Write to CSV
+def export_users_and_credentials_to_csv():
+# Connect to the existing database
+    conn = sqlite3.connect('password_manager.db')
+    cursor = conn.cursor()
+
+    # Query to fetch all users and their credentials
+    cursor.execute('''
+        SELECT 
+            u.username AS "User",
+            IFNULL(c.site, 'No site') AS "Website",
+            IFNULL(c.site_username, 'No username') AS "Site Username",
+            IFNULL(c.site_password, 'No password') AS "Encrypted Password",
+            IFNULL(c.site_iv, 'No IV') AS "IV",
+            IFNULL(c.site_tag, 'No Tag') AS "Tag"
+        FROM users u
+        LEFT JOIN credentials c ON u.id = c.user_id
+    ''')
+
+    # Fetch all rows
+    rows = cursor.fetchall()
+
+    # Define the CSV file path
+    current_directory = "./password-manager/"
+    file_name = "users_and_credentials.csv"
+    csv_file_path = os.path.join(current_directory, file_name)
+
+    # Ensure directory exists
+    os.makedirs(current_directory, exist_ok=True)
+
+    # Write to CSV
     with open(csv_file_path, mode='w', newline='', encoding='utf-8') as csv_file:
         writer = csv.writer(csv_file)
-        writer.writerow(["User", "Website", "Site Username", "Encrypted Password"])
+        writer.writerow(["User", "Website", "Site Username", "Encrypted Password", "IV", "Tag"])  # Add headers
         for row in rows:
-            user, site, site_username, encrypted_password = row
-            base64_password = base64.b64encode(encrypted_password).decode('utf-8')
-            print(f"Base64-encoded ciphertext: {base64_password}")
-            writer.writerow([user, site, site_username, base64_password])
+            writer.writerow(row)  # Write each row to the CSV
 
     conn.close()
     return csv_file_path
+
 
 # Call the export function and get the path
 #csv_path = export_users_and_credentials_to_csv()
