@@ -11,6 +11,8 @@ from tkinter import messagebox, filedialog
 import csv
 import re
 import base64
+import tkinter.ttk as ttk
+
 
 # Key derivation using PBKDF2
 def derive_key(password, salt):
@@ -120,18 +122,19 @@ def login_user(username, password):
     cursor = conn.cursor()
 
     # Fetch user data
-    cursor.execute('SELECT id, password_hash, salt FROM users WHERE username = ?', (username,))
+    cursor.execute('SELECT id, username, password_hash, salt FROM users WHERE username = ?', (username,))
     user = cursor.fetchone()
     conn.close()
 
     if user:
-        user_id, stored_password_hash, stored_salt = user
+        user_id, username, stored_password_hash, stored_salt = user
         if verify_password(stored_salt, stored_password_hash, password):
             derived_key = derive_key(password, bytes.fromhex(stored_salt))  # Ensure derived_key is bytes
-            return user_id, derived_key  # Successful login
+            return user_id, username, derived_key  # Successful login
     # Handle invalid credentials
     messagebox.showerror("Error", "Invalid username or password.")
-    return None, None
+    return None, None, None
+
 
 # Add a Credential
 def add_credential(key, user_id, site, site_username, site_password):
@@ -156,25 +159,75 @@ def add_credential(key, user_id, site, site_username, site_password):
         conn.close()
 
 # View Credentials
-def view_credentials(key, user_id):
+# def view_credentials(key, user_id):
+#     conn = sqlite3.connect('password_manager.db')
+#     cursor = conn.cursor()
+
+#     cursor.execute('SELECT site, site_username, site_password, site_iv, site_tag FROM credentials WHERE user_id = ?', (user_id,))
+#     credentials = cursor.fetchall()
+#     conn.close()
+
+#     if credentials:
+#         result = ""
+#         for site, username, password, iv, tag in credentials:
+#             try:
+#                 decrypted_password = decrypt_aes_256(key, password, iv, tag)
+#             except Exception:
+#                 decrypted_password = "[Decryption Failed]"
+#             result += f"Site: {site}, Username: {username}, Password: {decrypted_password}\n"
+#         messagebox.showinfo("Your Credentials", result)
+#     else:
+#         messagebox.showinfo("Your Credentials", "No credentials stored.")
+
+import tkinter.ttk as ttk
+
+def view_credentials(key, user_id, root, app_instance):
+    # Clear the current window content
+    for widget in root.winfo_children():
+        widget.destroy()
+
+    # Create a new frame for displaying credentials
+    frame = tk.Frame(root, bg='lightblue')
+    frame.pack(fill='both', expand=True)
+
+    tk.Label(frame, text="Your Credentials", font=("Arial", 16), bg='lightblue').pack(pady=10)
+
+    # Fetch credentials from the database
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()
-
     cursor.execute('SELECT site, site_username, site_password, site_iv, site_tag FROM credentials WHERE user_id = ?', (user_id,))
     credentials = cursor.fetchall()
     conn.close()
 
+    # Table frame
+    table_frame = tk.Frame(frame, bg='lightblue')
+    table_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
     if credentials:
-        result = ""
-        for site, username, password, iv, tag in credentials:
+        # Create a treeview widget to display credentials in a table format
+        columns = ("Site", "Username", "Password")
+        tree = ttk.Treeview(table_frame, columns=columns, show='headings', height=10)
+        tree.pack(fill='both', expand=True)
+
+        # Define table headings
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=150)
+
+        # Insert credentials into the table
+        for site, username, encrypted_password, iv, tag in credentials:
             try:
-                decrypted_password = decrypt_aes_256(key, password, iv, tag)
+                decrypted_password = decrypt_aes_256(key, encrypted_password, iv, tag)
             except Exception:
                 decrypted_password = "[Decryption Failed]"
-            result += f"Site: {site}, Username: {username}, Password: {decrypted_password}\n"
-        messagebox.showinfo("Your Credentials", result)
+            tree.insert("", "end", values=(site, username, decrypted_password))
+
     else:
-        messagebox.showinfo("Your Credentials", "No credentials stored.")
+        tk.Label(frame, text="No credentials stored.", font=("Arial", 12), bg='lightblue').pack(pady=10)
+
+    # Back button to return to the dashboard
+    tk.Button(frame, text="Back to Menu", command=app_instance.show_dashboard, bd=0, padx=20, pady=10).pack(pady=20)
+
 
 # The rest of your code remains unchanged, including the `delete_credential`, `update_credential`, `Tkinter` setup, etc.
 # Ensure the `view_credentials` and other calls to manage credentials pass the derived `key` for encryption/decryption.
@@ -321,10 +374,11 @@ class PasswordManagerApp:
                 messagebox.showerror("Error", "All fields are required.")
                 return
 
-            user_id, derived_key = login_user(username, password)
+            user_id, username, derived_key = login_user(username, password)
             if user_id:
                 self.user_id = user_id
-                self.key = derived_key  # Derived key in bytes
+                self.username = username  # Store the username
+                self.key = derived_key
                 self.show_dashboard()
             else:
                 messagebox.showerror("Error", "Invalid username or password.")
@@ -334,15 +388,24 @@ class PasswordManagerApp:
 
         self.root.update_idletasks()
 
+
     def show_dashboard(self):
         self.clear_frame()
 
-        tk.Label(self.root, text="Dashboard", font=("Arial", 16), bg='lightblue').pack(pady=10)
+        # Welcome message
+        tk.Label(
+            self.root,
+            text=f"Welcome, {self.username}!",
+            font=("Arial", 16, "bold"),
+            bg='lightblue'
+        ).pack(pady=20)
+
+        # Dashboard options
         tk.Button(self.root, text="Add Credential", width=20, command=self.show_add_credential, bd=0, padx=20, pady=10).pack(pady=5)
-        tk.Button(self.root, text="View Credentials", width=20, command=lambda: view_credentials(self.key, self.user_id), bd=0, padx=20, pady=10).pack(pady=5)
+        tk.Button(self.root, text="View Credentials", width=20, command=lambda: view_credentials(self.key, self.user_id, self.root, self), bd=0, padx=20, pady=10).pack(pady=5)
         tk.Button(self.root, text="Delete Credential", width=20, command=self.show_delete_credential, bd=0, padx=20, pady=10).pack(pady=5)
         tk.Button(self.root, text="Update Credential", width=20, command=self.show_update_credential, bd=0, padx=20, pady=10).pack(pady=5)
-        tk.Button(self.root, text="Logout", width=20, command=self.logout, bd=0, padx=20, pady=10).pack(pady=5)
+        tk.Button(self.root, text="Logout", width=20, command=self.logout, bd=0, padx=20, pady=10).pack(pady=20)
 
     def show_add_credential(self):
         self.clear_frame()
@@ -442,6 +505,7 @@ class PasswordManagerApp:
         self.user_id = None
         self.key = None
         self.show_main_menu()
+
 
 def export_users_and_credentials_to_csv():
     # Connect to the existing database
